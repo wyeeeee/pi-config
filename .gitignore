@@ -1,0 +1,9 @@
+# Dependencies (installed via npm install, not tracked)
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
