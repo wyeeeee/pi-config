@@ -1,21 +1,26 @@
 {
   "name": "pi-config",
-  "version": "0.1.0",
-  "description": "Personal pi coding-agent extensions bundle: subagent (follows current model), plan-mode, todo, question, questionnaire, built-in-tool-renderer, minimal-mode, status-line.",
+  "version": "0.2.0",
+  "description": "Personal pi coding-agent extensions bundle: subagent (follows current model), plan-mode, todo, question, questionnaire, built-in-tool-renderer, minimal-mode, status-line, plus Tavily web search with /tavily-key auth helper.",
   "type": "module",
   "keywords": ["pi-package"],
   "pi": {
     "extensions": [
       "extensions/subagent/index.ts",
       "extensions/plan-mode/index.ts",
+      "extensions/tavily-auth.ts",
       "extensions/todo.ts",
       "extensions/question.ts",
       "extensions/questionnaire.ts",
       "extensions/built-in-tool-renderer.ts",
       "extensions/minimal-mode.ts",
-      "extensions/status-line.ts"
+      "extensions/status-line.ts",
+      "node_modules/@tavily/pi-extension/index.ts"
     ],
     "prompts": ["./prompts"]
+  },
+  "dependencies": {
+    "@tavily/pi-extension": "^0.1.2"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

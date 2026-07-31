@@ -11,6 +11,19 @@ pi install git:github.com/<your-user>/pi-config
 
 Reload or restart pi, then everything below is available.
 
+### Tavily (optional web search)
+
+This bundle includes the Tavily extension. Configure its API key once:
+
+```
+/tavily-key        # paste your tvly-... key
+```
+
+The key is stored at `~/.pi/agent/tavily-key` and injected into
+`process.env.TAVILY_API_KEY` on every session start — no `export` needed,
+no restart after setting. Also: `/tavily-key show` (masked) and
+`/tavily-key clear`.
+
 ## Contents
 
 ### Extensions
@@ -19,12 +32,14 @@ Reload or restart pi, then everything below is available.
 |-----------|--------------|
 | **subagent** | Delegate tasks to isolated-context subagents (single / parallel / chain). **Modified: subagents follow the parent session's current model** (`ctx.model`) instead of a hardcoded one; falls back to pi's default model. Agent definitions are bundled in `extensions/subagent/agents/`. |
 | **plan-mode** | Read-only planning mode: `/plan`, `Ctrl+Alt+P`, `--plan`. Disables edit/write, read-only bash allowlist, numbered-plan extraction with progress widget. |
+| **tavily-auth** | `/tavily-key` command to configure the Tavily API key; persists to disk and injects into `process.env` on every session start. |
 | **todo** | Todo list tool. |
 | **question** | Ask-the-user question tool. |
 | **questionnaire** | Structured questionnaire tool. |
 | **built-in-tool-renderer** | Custom rendering for built-in tools. |
 | **minimal-mode** | Minimal UI mode. |
 | **status-line** | Custom status line. |
+| **tavily** | Web search tools (bundled from `npm:@tavily/pi-extension`). Requires `/tavily-key`. |
 
 ### Prompts (`prompts/`)
 
@@ -45,7 +60,9 @@ they always follow whatever model the parent session is currently using.
   lowest-priority source, so `~/.pi/agent/agents/` still overrides per-machine.
 - Sources: `subagent` and `plan-mode` originate from pi's official
   `examples/extensions/` (modified as noted); the single-file extensions are
-  upstream examples, unmodified.
+  upstream examples, unmodified. `tavily` is bundled from
+  `npm:@tavily/pi-extension` via `dependencies` + a `node_modules/` path in
+  `pi.extensions`; `tavily-auth` is custom.
 
 ## Update after changes
 
