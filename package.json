@@ -14,7 +14,6 @@
       "extensions/questionnaire.ts",
       "extensions/built-in-tool-renderer.ts",
       "extensions/notify.ts",
-      "extensions/status-line.ts",
       "vendor/*.ts"
     ],
     "prompts": ["./prompts"]

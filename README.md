@@ -38,7 +38,6 @@ no restart after setting. Also: `/tavily-key show` (masked) and
 | **questionnaire** | Structured questionnaire tool. |
 | **built-in-tool-renderer** | Custom rendering for built-in tools. |
 | **notify** | Cross-platform desktop notifications on task completion / question / error. Zero-dependency native backends (macOS `osascript`, Linux `notify-send`, Windows PowerShell). `/notify on\|off\|test\|status`; suppresses spawned subagents via `PI_SUBAGENT`. |
-| **status-line** | Custom status line. |
 | **tavily** | Web search tools (bundled via `vendor/`; see [vendor/README.md](vendor/README.md)). Requires `/tavily-key`. |
 
 ### Prompts (`prompts/`)
