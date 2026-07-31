@@ -15,7 +15,7 @@
       "extensions/built-in-tool-renderer.ts",
       "extensions/minimal-mode.ts",
       "extensions/status-line.ts",
-      "node_modules/@tavily/pi-extension/index.ts"
+      "vendor/*.ts"
     ],
     "prompts": ["./prompts"]
   },

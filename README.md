@@ -39,7 +39,7 @@ no restart after setting. Also: `/tavily-key show` (masked) and
 | **built-in-tool-renderer** | Custom rendering for built-in tools. |
 | **minimal-mode** | Minimal UI mode. |
 | **status-line** | Custom status line. |
-| **tavily** | Web search tools (bundled from `npm:@tavily/pi-extension`). Requires `/tavily-key`. |
+| **tavily** | Web search tools (bundled via `vendor/`; see [vendor/README.md](vendor/README.md)). Requires `/tavily-key`. |
 
 ### Prompts (`prompts/`)
 
@@ -60,9 +60,12 @@ they always follow whatever model the parent session is currently using.
   lowest-priority source, so `~/.pi/agent/agents/` still overrides per-machine.
 - Sources: `subagent` and `plan-mode` originate from pi's official
   `examples/extensions/` (modified as noted); the single-file extensions are
-  upstream examples, unmodified. `tavily` is bundled from
-  `npm:@tavily/pi-extension` via `dependencies` + a `node_modules/` path in
-  `pi.extensions`; `tavily-auth` is custom.
+  upstream examples, unmodified. `tavily-auth` is custom.
+- **Third-party packages live in [`vendor/`](vendor/)**: each is a one-line shim
+  re-exporting the package's default, auto-discovered via the `vendor/*.ts` glob
+  in `pi.extensions`. Add or remove packages without touching the extensions
+  list — see [vendor/README.md](vendor/README.md). `dependencies` in
+  package.json still lists them (an npm requirement).
 
 ## Update after changes
 
