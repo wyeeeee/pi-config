@@ -196,10 +196,12 @@ export default function (pi: ExtensionAPI) {
 	// Spawned subagent children self-disable so they never notify.
 	if (process.env.PI_SUBAGENT === "1") return;
 
-	// Per-run error tracking. Set by tool_result(message_end) on error, cleared by a
-	// later normal assistant completion, consumed & reset at agent_settled.
+	// Per-run tracking. errorFlag/lastErrorText track failures (cleared by a later
+	// normal completion); lastAssistantText feeds the completion notification body.
+	// All consumed & reset at agent_settled.
 	let errorFlag = false;
 	let lastErrorText = "";
+	let lastAssistantText = "";
 
 	pi.on("tool_execution_start", async (event, ctx) => {
 		if (event.toolName !== "question" && event.toolName !== "questionnaire") return;
@@ -224,9 +226,16 @@ export default function (pi: ExtensionAPI) {
 	pi.on("message_end", async (event) => {
 		const msg = event.message as any;
 		if (!msg || msg.role !== "assistant") return;
+		// Track the latest assistant text so the completion notification can show it.
+		const parts = Array.isArray(msg.content) ? msg.content : [];
+		lastAssistantText = parts
+			.filter((p: any) => p && p.type === "text")
+			.map((p: any) => p.text)
+			.join("\n")
+			.trim();
 		if (msg.stopReason === "error") {
 			errorFlag = true;
-			lastErrorText = msg.errorMessage ?? lastErrorText;
+			lastErrorText = msg.errorMessage || lastAssistantText;
 		} else {
 			// A later normal completion overrides an earlier tool/model error in the same run.
 			errorFlag = false;
@@ -236,10 +245,11 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("agent_settled", async (_event, ctx) => {
 		const where = path.basename(ctx.cwd) || "pi";
-		if (errorFlag) fire("error", ctx, lastErrorText || where);
-		else fire("complete", ctx, where);
+		if (errorFlag) fire("error", ctx, lastErrorText || lastAssistantText || where);
+		else fire("complete", ctx, lastAssistantText || where);
 		errorFlag = false;
 		lastErrorText = "";
+		lastAssistantText = "";
 	});
 
 	pi.registerCommand("notify", {
