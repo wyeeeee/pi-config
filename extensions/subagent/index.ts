@@ -343,6 +343,8 @@ async function runSingleAgent(
 				cwd: cwd ?? defaultCwd,
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
+				// Mark child as a subagent so extensions (e.g. notify) can self-disable.
+				env: { ...process.env, PI_SUBAGENT: "1" },
 			});
 			let buffer = "";
 

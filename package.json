@@ -1,7 +1,7 @@
 {
   "name": "pi-config",
   "version": "0.2.0",
-  "description": "Personal pi coding-agent extensions bundle: subagent (follows current model), plan-mode, todo, question, questionnaire, built-in-tool-renderer, minimal-mode, status-line, plus Tavily web search with /tavily-key auth helper.",
+  "description": "Personal pi coding-agent extensions bundle: subagent (follows current model), plan-mode, todo, question, questionnaire, built-in-tool-renderer, notify (cross-platform desktop notifications), plus Tavily web search with /tavily-key auth helper.",
   "type": "module",
   "keywords": ["pi-package"],
   "pi": {
@@ -13,6 +13,7 @@
       "extensions/question.ts",
       "extensions/questionnaire.ts",
       "extensions/built-in-tool-renderer.ts",
+      "extensions/notify.ts",
       "extensions/status-line.ts",
       "vendor/*.ts"
     ],
