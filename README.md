@@ -37,7 +37,6 @@ no restart after setting. Also: `/tavily-key show` (masked) and
 | **question** | Ask-the-user question tool. |
 | **questionnaire** | Structured questionnaire tool. |
 | **built-in-tool-renderer** | Custom rendering for built-in tools. |
-| **minimal-mode** | Minimal UI mode. |
 | **status-line** | Custom status line. |
 | **tavily** | Web search tools (bundled via `vendor/`; see [vendor/README.md](vendor/README.md)). Requires `/tavily-key`. |
 

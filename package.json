@@ -13,7 +13,6 @@
       "extensions/question.ts",
       "extensions/questionnaire.ts",
       "extensions/built-in-tool-renderer.ts",
-      "extensions/minimal-mode.ts",
       "extensions/status-line.ts",
       "vendor/*.ts"
     ],
