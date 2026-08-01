@@ -30,7 +30,7 @@ no restart after setting. Also: `/tavily-key show` (masked) and
 
 | Extension | What it does |
 |-----------|--------------|
-| **subagent** | Delegate tasks to isolated-context subagents (single / parallel / chain). **Modified: subagents follow the parent session's current model** (`ctx.model`) instead of a hardcoded one; falls back to pi's default model. Agent definitions are bundled in `extensions/subagent/agents/`. |
+| **subagent** | Delegate tasks to isolated-context subagents (single / parallel / chain). **Modified: subagents follow the parent session's current model** (`ctx.model`) instead of a hardcoded one; falls back to pi's default model. Agent definitions are bundled in `extensions/subagent/agents/`. **Hardened against hangs:** resolves via `waitForChildProcess` (no more `on('close')` deadlock from detached descendants), idle-timeout kills a stuck subagent (default 600s, agent-customizable via the `timeout` param), and abort/timeout return the partial output + reason to the main agent. Forensic logs at `~/.pi/agent/logs/subagent/`. |
 | **plan-mode** | Read-only planning mode: `/plan`, `Ctrl+Alt+P`, `--plan`. Disables edit/write, read-only bash allowlist, numbered-plan extraction with progress widget. |
 | **tavily-auth** | `/tavily-key` command to configure the Tavily API key; persists to disk and injects into `process.env` on every session start. |
 | **todo** | Todo list tool. |

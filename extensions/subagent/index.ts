@@ -12,7 +12,7 @@
  * Uses JSON mode to capture structured output from subagents.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -33,6 +33,12 @@ import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
+/** Kill a subagent if it emits no stdout for this long (safety net for hangs). */
+const DEFAULT_IDLE_TIMEOUT_SEC = 600;
+/** Grace window after child exit before resolving, while trailing pipe data drains. */
+const EXIT_STDIO_GRACE_MS = 100;
+/** Per-run subagent logs land here, for post-mortem when a run hangs or fails. */
+const SUBAGENT_LOG_DIR = path.join(getAgentDir(), "logs", "subagent");
 const COLLAPSED_ITEM_COUNT = 10;
 const PER_TASK_OUTPUT_CAP = 50 * 1024;
 
@@ -159,6 +165,8 @@ interface SingleResult {
 	stopReason?: string;
 	errorMessage?: string;
 	step?: number;
+	/** Path to this run's forensic log (lifecycle + stderr). */
+	logPath?: string;
 }
 
 interface SubagentDetails {
@@ -263,6 +271,113 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	return { command: "pi", args };
 }
 
+function ts(): string {
+	return new Date().toISOString();
+}
+
+/** Append-only forensic logger for a single subagent run. */
+function createRunLogger(agentName: string): { log: (line: string) => void; path: string } {
+	try {
+		fs.mkdirSync(SUBAGENT_LOG_DIR, { recursive: true });
+	} catch {
+		/* ignore */
+	}
+	const safeName = agentName.replace(/[^\w.-]+/g, "_");
+	const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+	const logPath = path.join(SUBAGENT_LOG_DIR, `${stamp}-${safeName}-${process.pid}.log`);
+	const log = (line: string) => {
+		try {
+			fs.appendFileSync(logPath, `${ts()} ${line}\n`, { encoding: "utf8" });
+		} catch {
+			/* ignore */
+		}
+	};
+	return { log, path: logPath };
+}
+
+/**
+ * Resolve when a child process has terminated, WITHOUT hanging forever on
+ * inherited stdio handles held open by detached descendants.
+ *
+ * Replaces the old `proc.on("close")` wait, which deadlocks when a descendant
+ * keeps the stdout/stderr pipe open after the child exits. Mirrors pi's own
+ * internal waitForChildProcess (earendil-works/pi#5303): after `exit`, wait for
+ * the pipes to fall idle (a grace timer re-armed on each chunk) rather than
+ * waiting for `close`, which may never fire.
+ */
+function waitForChildProcess(child: ChildProcess): Promise<number | null> {
+	return new Promise((resolve, reject) => {
+		let settled = false;
+		let exited = false;
+		let exitCode: number | null = null;
+		let postExitTimer: ReturnType<typeof setTimeout> | undefined;
+		let stdoutEnded = child.stdout === null;
+		let stderrEnded = child.stderr === null;
+
+		const cleanup = () => {
+			if (postExitTimer) {
+				clearTimeout(postExitTimer);
+				postExitTimer = undefined;
+			}
+			child.removeListener("error", onError);
+			child.removeListener("exit", onExit);
+			child.removeListener("close", onClose);
+			child.stdout?.removeListener("end", onStdoutEnd);
+			child.stderr?.removeListener("end", onStderrEnd);
+			child.stdout?.removeListener("data", onData);
+			child.stderr?.removeListener("data", onData);
+		};
+		const finalize = (code: number | null) => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			child.stdout?.destroy();
+			child.stderr?.destroy();
+			resolve(code);
+		};
+		const maybeFinalizeAfterExit = () => {
+			if (!exited || settled) return;
+			if (stdoutEnded && stderrEnded) finalize(exitCode);
+		};
+		const armIdleTimer = () => {
+			if (postExitTimer) clearTimeout(postExitTimer);
+			postExitTimer = setTimeout(() => finalize(exitCode), EXIT_STDIO_GRACE_MS);
+		};
+		const onData = () => {
+			if (exited && !settled) armIdleTimer();
+		};
+		const onStdoutEnd = () => {
+			stdoutEnded = true;
+			maybeFinalizeAfterExit();
+		};
+		const onStderrEnd = () => {
+			stderrEnded = true;
+			maybeFinalizeAfterExit();
+		};
+		const onError = (err: Error) => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			reject(err);
+		};
+		const onExit = (code: number | null) => {
+			exited = true;
+			exitCode = code;
+			maybeFinalizeAfterExit();
+			if (!settled) armIdleTimer();
+		};
+		const onClose = (code: number | null) => finalize(code);
+
+		child.stdout?.once("end", onStdoutEnd);
+		child.stderr?.once("end", onStderrEnd);
+		child.stdout?.on("data", onData);
+		child.stderr?.on("data", onData);
+		child.once("error", onError);
+		child.once("exit", onExit);
+		child.once("close", onClose);
+	});
+}
+
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
 async function runSingleAgent(
@@ -278,6 +393,8 @@ async function runSingleAgent(
 	/** When set, the subagent runs on this model instead of its configured one
 	 *  (used to follow the parent session's current model). */
 	overrideModel?: string,
+	/** Idle timeout in ms: kill the subagent if it emits no stdout for this long. */
+	idleTimeoutMs: number,
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
 
@@ -336,9 +453,18 @@ async function runSingleAgent(
 
 		args.push(`Task: ${task}`);
 		let wasAborted = false;
+		let timedOut = false;
+
+		const logger = createRunLogger(agentName);
+		currentResult.logPath = logger.path;
+		logger.log(`SPAWN agent=${agentName} model=${effectiveModel ?? "(default)"} idleTimeoutMs=${idleTimeoutMs}`);
+		logger.log(`TASK: ${task.replace(/\s+/g, " ").slice(0, 500)}`);
 
 		const exitCode = await new Promise<number>((resolve) => {
 			const invocation = getPiInvocation(args);
+			logger.log(
+				`CMD: ${invocation.command} ${invocation.args.map((a) => (a.length > 80 ? a.slice(0, 80) + "…" : a)).join(" ")}`,
+			);
 			const proc = spawn(invocation.command, invocation.args, {
 				cwd: cwd ?? defaultCwd,
 				shell: false,
@@ -347,6 +473,7 @@ async function runSingleAgent(
 				env: { ...process.env, PI_SUBAGENT: "1" },
 			});
 			let buffer = "";
+			let lastActivity = Date.now();
 
 			const processLine = (line: string) => {
 				if (!line.trim()) return;
@@ -375,6 +502,7 @@ async function runSingleAgent(
 						if (!currentResult.model && msg.model) currentResult.model = msg.model;
 						if (msg.stopReason) currentResult.stopReason = msg.stopReason;
 						if (msg.errorMessage) currentResult.errorMessage = msg.errorMessage;
+						logger.log(`TURN ${currentResult.usage.turns} stopReason=${msg.stopReason ?? "?"} ctx=${usage?.totalTokens ?? "?"}`);
 					}
 					emitUpdate();
 				}
@@ -385,7 +513,43 @@ async function runSingleAgent(
 				}
 			};
 
+			// Shared kill: SIGTERM now, SIGKILL after grace. The child pi's own
+			// SIGTERM handler reaps its descendants (killTrackedDetachedChildren).
+			const killProc = (reason: "abort" | "idle-timeout") => {
+				if (reason === "abort") wasAborted = true;
+				else timedOut = true;
+				logger.log(`KILL reason=${reason} pid=${proc.pid}`);
+				try {
+					proc.kill("SIGTERM");
+				} catch {
+					/* ignore */
+				}
+				setTimeout(() => {
+					try {
+						if (!proc.killed) proc.kill("SIGKILL");
+					} catch {
+						/* ignore */
+					}
+				}, 5000);
+			};
+
+			// Idle timer: reset on ANY stdout activity (incl. thinking/streaming
+			// deltas), so only a truly silent/stuck subagent trips it.
+			let idleTimer: ReturnType<typeof setTimeout> | undefined;
+			const armIdle = () => {
+				if (idleTimer) clearTimeout(idleTimer);
+				idleTimer = setTimeout(() => killProc("idle-timeout"), idleTimeoutMs);
+			};
+
+			// Heartbeat: periodic forensics line so a hang leaves a trail in the log.
+			const heartbeat = setInterval(() => {
+				const idleSec = Math.round((Date.now() - lastActivity) / 1000);
+				logger.log(`HEARTBEAT turn=${currentResult.usage.turns} idle=${idleSec}s stderr=${currentResult.stderr.length}B`);
+			}, 30000);
+
 			proc.stdout.on("data", (data) => {
+				lastActivity = Date.now();
+				armIdle();
 				buffer += data.toString();
 				const lines = buffer.split("\n");
 				buffer = lines.pop() || "";
@@ -393,33 +557,56 @@ async function runSingleAgent(
 			});
 
 			proc.stderr.on("data", (data) => {
-				currentResult.stderr += data.toString();
+				lastActivity = Date.now();
+				const text = data.toString();
+				currentResult.stderr += text;
+				logger.log(`STDERR: ${text.replace(/\n$/, "")}`);
 			});
 
-			proc.on("close", (code) => {
+			const finish = (code: number) => {
+				if (idleTimer) clearTimeout(idleTimer);
+				clearInterval(heartbeat);
 				if (buffer.trim()) processLine(buffer);
-				resolve(code ?? 0);
+				resolve(code);
+			};
+
+			// RC1 fix: resolve on process exit + idle pipes, never on `close` alone —
+			// a detached descendant can hold the pipe open forever and deadlock us.
+			waitForChildProcess(proc)
+				.then((code) => finish(code ?? 0))
+				.catch(() => finish(1));
+
+			proc.on("error", (err) => {
+				logger.log(`PROC ERROR: ${err.message}`);
+				finish(1);
 			});
 
-			proc.on("error", () => {
-				resolve(1);
-			});
+			armIdle();
 
 			if (signal) {
-				const killProc = () => {
-					wasAborted = true;
-					proc.kill("SIGTERM");
-					setTimeout(() => {
-						if (!proc.killed) proc.kill("SIGKILL");
-					}, 5000);
-				};
-				if (signal.aborted) killProc();
-				else signal.addEventListener("abort", killProc, { once: true });
+				const onAbort = () => killProc("abort");
+				if (signal.aborted) killProc("abort");
+				else signal.addEventListener("abort", onAbort, { once: true });
 			}
 		});
 
 		currentResult.exitCode = exitCode;
-		if (wasAborted) throw new Error("Subagent was aborted");
+		logger.log(`EXIT code=${exitCode} aborted=${wasAborted} timedOut=${timedOut} turns=${currentResult.usage.turns}`);
+		if (wasAborted) {
+			currentResult.exitCode = 130; // conventional abort exit code (128 + SIGINT 2)
+			currentResult.stopReason = "aborted";
+			const partial = getFinalOutput(currentResult.messages) || currentResult.stderr.trim() || "(no output)";
+			currentResult.errorMessage =
+				`Subagent was aborted — partial progress preserved (reached turn ${currentResult.usage.turns}). ` +
+				`Last output:\n${partial}\n(forensic log: ${logger.path})`;
+		} else if (timedOut) {
+			currentResult.exitCode = 124; // conventional timeout exit code
+			currentResult.stopReason = "timeout";
+			const partial = getFinalOutput(currentResult.messages) || currentResult.stderr.trim() || "(no output)";
+			currentResult.errorMessage =
+				`Subagent produced no output for ${Math.round(idleTimeoutMs / 1000)}s — likely hung; killed. ` +
+				`Last output:\n${partial}\n(forensic log: ${logger.path})`;
+		}
 		return currentResult;
 	} finally {
 		if (tmpPromptPath)
@@ -464,6 +651,12 @@ const SubagentParams = Type.Object({
 		Type.Boolean({ description: "Prompt before running project-local agents. Default: true.", default: true }),
 	),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
+	timeout: Type.Optional(
+		Type.Number({
+			description:
+				"Idle timeout in seconds: if the subagent produces no output for this long, it is killed as hung and its partial output + reason are returned. Default 600 (10 min). Raise for tasks with long silent commands.",
+		}),
+	),
 });
 
 export default function (pi: ExtensionAPI) {
@@ -487,6 +680,10 @@ export default function (pi: ExtensionAPI) {
 			// Subagents follow the parent session's current model (ctx.model),
 			// falling back to each agent's configured model when unavailable.
 			const currentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
+			// Idle timeout (safety net for hangs). Agent-customizable per dispatch.
+			const idleTimeoutMs = Math.round(
+				(typeof params.timeout === "number" && params.timeout > 0 ? params.timeout : DEFAULT_IDLE_TIMEOUT_SEC) * 1000,
+			);
 
 			const hasChain = (params.chain?.length ?? 0) > 0;
 			const hasTasks = (params.tasks?.length ?? 0) > 0;
@@ -574,6 +771,7 @@ export default function (pi: ExtensionAPI) {
 						chainUpdate,
 						makeDetails("chain"),
 						currentModel,
+						idleTimeoutMs,
 					);
 					results.push(result);
 
@@ -653,6 +851,7 @@ export default function (pi: ExtensionAPI) {
 						},
 						makeDetails("parallel"),
 						currentModel,
+						idleTimeoutMs,
 					);
 					allResults[index] = result;
 					emitParallelUpdate();
@@ -690,6 +889,7 @@ export default function (pi: ExtensionAPI) {
 					onUpdate,
 					makeDetails("single"),
 					currentModel,
+					idleTimeoutMs,
 				);
 				const isError = isFailedResult(result);
 				if (isError) {
