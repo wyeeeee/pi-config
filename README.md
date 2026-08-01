@@ -38,6 +38,7 @@ no restart after setting. Also: `/tavily-key show` (masked) and
 | **questionnaire** | Structured questionnaire tool. |
 | **built-in-tool-renderer** | Custom rendering for built-in tools. |
 | **notify** | Cross-platform desktop notifications on task completion / question / error. Zero-dependency native backends (macOS `osascript`, Linux `notify-send`, Windows PowerShell). `/notify on\|off\|test\|status`; suppresses in-process subagents via the vendored subagents' AsyncLocalStorage child-session marker. |
+| **btw** | Parallel side-conversation channel — **vendored source** of [`pi-btw`](https://github.com/dbachelder/pi-btw) at `extensions/btw.ts` (MIT; v0.4.1). `/btw <q>` opens a real pi sub-session (read/bash/edit/write) in a focused modal while the main agent keeps running; `Alt+/` toggle focus, `Esc` dismiss. Variants: `/btw:tangent` (contextless), `/btw:new`, `/btw:inject`, `/btw:summarize`, `/btw:model`, `/btw:thinking`, `/btw:clear`. Ships a `btw` skill (`skills/btw/`). |
 | **tavily** | Web search tools (bundled via `vendor/`; see [vendor/README.md](vendor/README.md)). Requires `/tavily-key`. |
 
 ## Design notes
@@ -48,6 +49,10 @@ no restart after setting. Also: `/tavily-key show` (masked) and
   source (no build step) — jiti resolves the `.js` relative imports back to
   `.ts`. Re-sync from upstream by diffing/merging its `src/` and updating the
   commit SHA in `VENDORED.md`.
+- **btw is vendored source** (not an npm dependency): a local fork of
+  `pi-btw` lives at `extensions/btw.ts` (MIT, v0.4.1; attribution in the file
+  header comment). Brings a `btw` skill at `skills/btw/` via the new
+  `pi.skills` field.
 - Sources: `plan-mode` originates from pi's official `examples/extensions/`
   (modified); the single-file extensions are upstream examples, unmodified.
   `tavily-auth` and `notify` are custom.
