@@ -1,12 +1,12 @@
 {
   "name": "pi-config",
-  "version": "0.2.0",
-  "description": "Personal pi coding-agent extensions bundle: subagent (follows current model), plan-mode, todo, question, questionnaire, built-in-tool-renderer, notify (cross-platform desktop notifications), plus Tavily web search with /tavily-key auth helper.",
+  "version": "0.3.0",
+  "description": "Personal pi coding-agent extensions bundle: subagents (vendored @tintinweb/pi-subagents — autonomous sub-agents, fleet UI, scheduling), plan-mode, todo, question, questionnaire, built-in-tool-renderer, notify (cross-platform desktop notifications), plus Tavily web search with /tavily-key auth helper.",
   "type": "module",
   "keywords": ["pi-package"],
   "pi": {
     "extensions": [
-      "extensions/subagent/index.ts",
+      "extensions/subagents/index.ts",
       "extensions/plan-mode/index.ts",
       "extensions/tavily-auth.ts",
       "extensions/todo.ts",
@@ -15,11 +15,13 @@
       "extensions/built-in-tool-renderer.ts",
       "extensions/notify.ts",
       "vendor/*.ts"
-    ],
-    "prompts": ["./prompts"]
+    ]
   },
   "dependencies": {
-    "@tavily/pi-extension": "^0.1.2"
+    "@sinclair/typebox": "^0.34.49",
+    "@tavily/pi-extension": "^0.1.2",
+    "croner": "^10.0.1",
+    "nanoid": "^5.0.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

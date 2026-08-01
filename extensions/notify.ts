@@ -11,8 +11,10 @@
  * unsupported backend degrades to a terminal bell + in-app toast and never
  * throws into pi.
  *
- * Spawned subagent children self-disable via the PI_SUBAGENT env marker that
- * the subagent extension sets on child spawns (see extensions/subagent/index.ts).
+ * Spawned (in-process) subagents are detected via the vendored subagents
+ * extension's AsyncLocalStorage child-session marker and suppressed (see
+ * extensions/subagents/child-context.ts), so a running subagent doesn't pop a
+ * toast.
  *
  * Usage:
  *   /notify              show status (enabled + detected backend)
@@ -182,6 +184,28 @@ function fallback(ctx: ExtensionContext, title: string, body: string, _reason: s
 	}
 }
 
+// ───────────────────────── subagent guard ─────────────────────────
+
+// In-process subagents (vendored @tintinweb/pi-subagents) run inside an
+// AsyncLocalStorage "child session" context. Suppress notifications there so a
+// running/background subagent doesn't pop a toast. Resolved lazily so notify
+// keeps working even if the subagents extension is absent.
+let _childCtxCheck: Promise<(() => boolean) | null> | undefined;
+function isInSubagent(): Promise<boolean> {
+	if (!_childCtxCheck) {
+		_childCtxCheck = import("./subagents/child-context.js")
+			.then((m: any) => (typeof m?.inChildSessionContext === "function" ? m.inChildSessionContext : null))
+			.catch(() => null);
+	}
+	return _childCtxCheck.then((fn) => {
+		try {
+			return fn ? fn() : false;
+		} catch {
+			return false;
+		}
+	});
+}
+
 // ───────────────────────── fire ─────────────────────────
 
 function fire(level: Level, ctx: ExtensionContext, body: string, force = false): void {
@@ -193,8 +217,6 @@ function fire(level: Level, ctx: ExtensionContext, body: string, force = false):
 // ───────────────────────── extension ─────────────────────────
 
 export default function (pi: ExtensionAPI) {
-	// Spawned subagent children self-disable so they never notify.
-	if (process.env.PI_SUBAGENT === "1") return;
 
 	// Per-run tracking. errorFlag/lastErrorText track failures (cleared by a later
 	// normal completion); lastAssistantText feeds the completion notification body.
@@ -205,6 +227,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("tool_execution_start", async (event, ctx) => {
 		if (event.toolName !== "question" && event.toolName !== "questionnaire") return;
+		if (await isInSubagent()) return;
 		const args = (event.args ?? {}) as Record<string, any>;
 		const body =
 			(typeof args.question === "string" && args.question) ||
@@ -244,6 +267,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {
+		if (await isInSubagent()) return;
 		const where = path.basename(ctx.cwd) || "pi";
 		if (errorFlag) fire("error", ctx, lastErrorText || lastAssistantText || where);
 		else fire("complete", ctx, lastAssistantText || where);
